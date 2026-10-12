@@ -79,6 +79,23 @@ def countdown_text(now: datetime | None = None) -> str:
     else:
         left = f"{days} д {hours:02d}:{minutes:02d}:{seconds:02d}"
 
+    # 31 декабря — праздник уже сегодня
+    if (now.month, now.day) == (12, 31):
+        hours_left = days * 24 + hours
+        return (
+            f"🎄 <b>Новый год сегодня!</b>\n\n"
+            f"      <b>До полуночи {hours_left} ч {minutes:02d} мин</b>\n\n"
+            f"🥂 Всё самое доброе — впереди!"
+        )
+
+    # 1 января — поздравляем и начинаем отсчёт до следующего
+    if (now.month, now.day) == (1, 1):
+        return (
+            f"🎉 <b>С Новым годом!</b>\n\n"
+            f"Пусть год будет добрым и спокойным.\n\n"
+            f"⏱ До следующего: {days} {plural(days, 'день', 'дня', 'дней')}"
+        )
+
     return (
         f"🎄 <b>До Нового года {target.year} осталось</b>\n\n"
         f"      <b>{days} {plural(days, 'день', 'дня', 'дней')}</b>\n\n"
