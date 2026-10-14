@@ -225,15 +225,19 @@ async def connect() -> Bot:
     )
 
 async def ban_user_by_reply(message:Message, bot:Bot):
+    if not message.reply_to_message:
+        await message.reply("❌ Эта команда должна быть ответом на сообщение пользователя, которого нужно забанить!")
+        return
     chat_id = message.chat.id
     target_user = message.reply_to_message.from_user
     target_id = target_user.id
     bot_user = await bot.get_me()
-    if target_id == message.froun_user.id:
+    if target_id == message.from_user.id:
         await message.reply("ты чо дурачок сам себя банить")
         return
     elif target_id == bot_user.id:
         await message.reply("я не буду банить себя")
+        return
     try:
         await bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
         await message.answer(
