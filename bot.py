@@ -224,7 +224,32 @@ async def connect() -> Bot:
         "\n\nДома включи Happ (он даёт прокси 127.0.0.1:10808) и запусти снова."
     )
 
-
+async def ban_user_by_reply(message:Message, bot:Bot):
+    chat_id = message.chat.id
+    target_user = message.reply_to_message.from_user
+    target_id = target_user.id
+    bot_user = await bot.get_me()
+    if target_id == message.froun_user.id:
+        await message.reply("ты чо дурачок сам себя банить")
+        return
+    elif target_id == bot_user.id:
+        await message.reply("я не буду банить себя")
+    try:
+        await bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
+        await message.answer(
+            f"Пользователь {target_user.full_name} (ID: {target_id}), успешно забанен"
+        )
+    except TelegramBadRequest as e:
+        if "can't remove chat owner" in e.message:
+            await message.reply("❌ Невозможно забанить создателя чата!")
+        elif "not enough rights" in e.message:
+            await message.reply("❌ У бота нет прав на блокировку пользователей или этот пользователь является администратором!")
+        else:
+            await message.reply(f"❌ Ошибка Telegram: {e.message}")
+            
+    except Exception as e:
+        await message.reply(f"❌ Произошла непредвиденная ошибка: {e}")
+        
 async def main() -> None:
     bot = await connect()
     await bot.set_my_commands(
