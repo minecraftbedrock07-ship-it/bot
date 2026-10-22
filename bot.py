@@ -1,22 +1,8 @@
-"""Telegram-бот: считает дни до Нового года.
+"""Telegram-бот: считает дни до Нового года и отправляет видеоролик вместе с отсчётом.
 
-Поведение:
-  * отвечает только на команду /days (и /start, /ny, /newyear);
-  * на все остальные сообщения молчит;
-  * каждый день в 00:00 по Москве присылает отсчёт туда, где вызывали команду.
-
-Чаты и темы для рассылки лежат в chats.json рядом с файлом. Формат:
-
-    [
-      {"chat_id": -1004396358982, "thread_id": 5},   <- группа + конкретная тема
-      {"chat_id": -1009876543210},                   <- группа без темы
-      {"chat_id": 42}                                <- личка
-    ]
-
-Можно просто написать /days внутри нужной темы — бот запомнит и чат, и тему.
-Либо вписать thread_id руками (номер темы видно в ссылке на сообщение:
-t.me/c/<группа>/<thread_id>/<номер сообщения>).
-
+pip install aiogram aiohttp-socks
+TOKEN уже вписан ниже — просто запускай файл.
+"""
 
 from __future__ import annotations
 
@@ -35,12 +21,13 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.filters import Command
-from aiogram.types import BotCommand, Message
+from aiogram.types import BotCommand, Message, FSInputFile  
 
 TOKEN = os.getenv("BOT_TOKEN", "8312049847:AAEYqmAcRpvcr1sdpRM6o8o75iNdfeWsfuA")
-HAPP_PROXY = "socks5://127.0.0.1:10808"  # локальный прокси Happ
-MSK = timezone(timedelta(hours=3), "MSK")  # Москва = UTC+3, летнего времени нет
+HAPP_PROXY = "socks5://127.0.0.1:10808"  
+MSK = timezone(timedelta(hours=3), "MSK")  
 CHATS_FILE = Path(__file__).with_name("chats.json")
+VIDEOS_DIR = Path(__file__).with_name("videos")  
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("newyear")
@@ -56,12 +43,21 @@ def plural(number: int, one: str, few: str, many: str) -> str:
     return one if n == 1 else few if 2 <= n <= 4 else many
 
 
-def countdown_text(now: datetime | None = None) -> str:
+def get_days_left(now: datetime | None = None) -> int:
+    """Возвращает только чистое количество оставшихся дней."""
+    now = now or datetime.now(MSK)
+    target = now.replace(year=now.year + 1, month=1, day=1,
+                         hour=0, minute=0, second=0, microsecond=0)
+    return max(0, int((target - now).total_seconds())) // 86400
+
+
+def countdown_text_by_days(days: int, now: datetime | None = None) -> str:
+    """Генерирует текст отсчета под видео на основе количества дней."""
     now = now or datetime.now(MSK)
     target = now.replace(year=now.year + 1, month=1, day=1,
                          hour=0, minute=0, second=0, microsecond=0)
     total = max(0, int((target - now).total_seconds()))
-    days, rest = divmod(total, 86400)
+    _, rest = divmod(total, 86400)
     hours, rest = divmod(rest, 3600)
     minutes, seconds = divmod(rest, 60)
 
@@ -71,23 +67,6 @@ def countdown_text(now: datetime | None = None) -> str:
         left = f"{hours} ч {minutes} мин"
     else:
         left = f"{days} д {hours:02d}:{minutes:02d}:{seconds:02d}"
-
-    # 31 декабря — праздник уже сегодня
-    if (now.month, now.day) == (12, 31):
-        hours_left = days * 24 + hours
-        return (
-            f"🎄 <b>Новый год сегодня!</b>\n\n"
-            f"      <b>До полуночи {hours_left} ч {minutes:02d} мин</b>\n\n"
-            f"🥂 Всё самое доброе — впереди!"
-        )
-
-    # 1 января — поздравляем и начинаем отсчёт до следующего
-    if (now.month, now.day) == (1, 1):
-        return (
-            f"🎉 <b>С Новым годом!</b>\n\n"
-            f"Пусть год будет добрым и спокойным.\n\n"
-            f"⏱ До следующего: {days} {plural(days, 'день', 'дня', 'дней')}"
-        )
 
     return (
         f"🎄 <b>До Нового года {target.year} осталось</b>\n\n"
@@ -99,10 +78,6 @@ def countdown_text(now: datetime | None = None) -> str:
 
 # ─────────────────── чаты и темы для рассылки ────────────────────
 def chats() -> list[tuple[int, int | None]]:
-    """Читает chats.json -> список пар (chat_id, thread_id | None).
-
-    Понимает и старый формат [-100123, 42], и новый со словарями.
-    """
     try:
         raw = json.loads(CHATS_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -143,7 +118,18 @@ def remember(chat_id: int, thread_id: int | None = None) -> None:
 async def cmd_days(message: Message) -> None:
     """Единственная реакция на сообщения — команда."""
     log.info("Команда из чата %s, тема %s", message.chat.id, message.message_thread_id or "нет")
-    await message.answer(countdown_text())
+    
+    days = get_days_left()
+    text = countdown_text_by_days(days)
+    video_path = VIDEOS_DIR / f"{days}.mp4"
+
+    if video_path.exists():
+        # Отправляем видео, а текст передаем в подпись (caption)
+        await message.answer_video(video=FSInputFile(video_path), caption=text)
+    else:
+        log.warning("Файл %s не найден, отправляем только текст", video_path.name)
+        await message.answer(text)
+
     remember(message.chat.id, message.message_thread_id)
 
 
@@ -156,15 +142,34 @@ def next_midnight(now: datetime | None = None) -> datetime:
 
 
 async def push(bot: Bot) -> None:
-    """Отправляет отсчёт во все чаты и темы из chats.json."""
+    """Отправляет видео + отсчёт во все чаты и темы из chats.json в 00:00."""
     targets = chats()
     if not targets:
         log.warning("chats.json пуст: напиши боту /days или добавь чат вручную")
         return
+
+    days = get_days_left()
+    text = countdown_text_by_days(days)
+    video_path = VIDEOS_DIR / f"{days}.mp4"
+    
+    video_exists = video_path.exists()
+    uploaded_file_id = None  
+
     for chat_id, thread_id in targets:
         extra = {"message_thread_id": thread_id} if thread_id is not None else {}
         try:
-            await bot.send_message(chat_id, countdown_text(), **extra)
+            if video_exists:
+                if uploaded_file_id:
+                    
+                    await bot.send_video(chat_id, video=uploaded_file_id, caption=text, **extra)
+                else:
+                    
+                    msg = await bot.send_video(chat_id, video=FSInputFile(video_path), caption=text, **extra)
+                    uploaded_file_id = msg.video.file_id  
+            else:
+                
+                await bot.send_message(chat_id, text, **extra)
+                
             log.info("Отсчёт отправлен в %s, тема %s", chat_id, thread_id or "нет")
         except Exception as exc:
             log.warning("Не смог отправить в %s (тема %s): %s", chat_id, thread_id, exc)
@@ -211,7 +216,7 @@ async def connect() -> Bot:
             raise SystemExit(
                 "Telegram отверг токен. Проверь TOKEN в начале файла — взять можно у @BotFather."
             )
-        except Exception as exc:  # бывает ProxyConnectionError у socks-прокси
+        except Exception as exc:
             problems.append(f"{how}: {type(exc).__name__}")
             await bot.session.close()
             continue
@@ -221,62 +226,25 @@ async def connect() -> Bot:
 
     raise SystemExit(
         "Не смог достучаться до Telegram:\n  " + "\n  ".join(problems) +
-        "\n\nДома включи Happ (он даёт прокси 127.0.0.1:10808) и запусти снова."
+        "\n\nДома включи Happ (он даёт прокси 127.0.0.1:10808) and запусти снова."
     )
 
-async def ban_user_by_reply(message:Message, bot:Bot):
-    if not message.reply_to_message:
-        await message.reply("❌ Эта команда должна быть ответом на сообщение пользователя, которого нужно забанить!")
-        return
-    chat_id = message.chat.id
-    target_user = message.reply_to_message.from_user
-    target_id = target_user.id
-    bot_user = await bot.get_me()
-    if target_id == message.from_user.id:
-        await message.reply("ты чо дурачок сам себя банить")
-        return
-    elif target_id == bot_user.id:
-        await message.reply("я не буду банить себя")
-        return
-    try:
-        await bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
-        await message.answer(
-            f"Пользователь {target_user.full_name} (ID: {target_id}), успешно забанен"
-        )
-    except TelegramBadRequest as e:
-        if "can't remove chat owner" in e.message:
-            await message.reply("❌ Невозможно забанить создателя чата!")
-        elif "not enough rights" in e.message:
-            await message.reply("❌ У бота нет прав на блокировку пользователей или этот пользователь является администратором!")
-        else:
-            await message.reply(f"❌ Ошибка Telegram: {e.message}")
-            
-    except Exception as e:
-        await message.reply(f"❌ Произошла непредвиденная ошибка: {e}")
-        
+
 async def main() -> None:
+    # Автоматически создаем папку для видео, если её нет
+    VIDEOS_DIR.mkdir(exist_ok=True)
+
     bot = await connect()
     await bot.set_my_commands(
         [BotCommand(command="days", description="Сколько дней до Нового года")]
     )
     await bot.delete_webhook(drop_pending_updates=True)
-    log.info("Бот запущен. Рассылка в 00:00 МСК по списку: %s", chats() or "пока пусто")
-
-    async def midnight_loop() -> None:
-        while True:
-            target = next_midnight()
-            await asyncio.sleep(max((target - datetime.now(MSK)).total_seconds(), 0))
-            await push(bot)
-            await asyncio.sleep(60)  # чтобы не отправить дважды в одну минуту
-
-    try:
-        await asyncio.gather(dp.start_polling(bot), midnight_loop())
-    finally:
-        await bot.session.close()
+    log.info("Бот запущен. Рассылка видео + текста в 00:00 МСК.")
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        log.info("Остановлено")
+    except (KeyboardInterrupt, SystemExit):
+        log.info("Бот остановлен")
